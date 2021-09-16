@@ -9,6 +9,7 @@ __all__ = ['CancelStepException', 'CancelFitException', 'CancelEpochException', 
 from .data.all import *
 from .optimizer import *
 from .callback.core import *
+import gradio as gr
 import pickle
 
 # Cell
@@ -272,6 +273,36 @@ class Learner(GetAttr):
         if with_input: res = (dec_inp,) + res
         return res
 
+    def get_gradio_types(self):
+        type_mapping = {
+           TensorImage: "image",
+           TensorCategory: "label",
+           TitledInt: "number",
+           TitledFloat: "number",
+           TitledStr: "text",
+        }
+        types = getattr(self.dls, '_types')[tuple]
+        try:
+            gradio_types = type_mapping[types[0]], type_mapping[types[1]]
+        except KeyError as e:
+            raise KeyError(f"Cannot read types `{types}`. Please create your own `predict_fn` and pass in the parameters into `demo`")
+        return gradio_types
+
+    def gradio_predict_fn(self, inp):
+        output = self.predict(inp.name)
+        if self.get_gradio_types()[1] == 'label':
+            output = {self.dls.vocab[i]: float(output[2][i]) for i in range(len(self.dls.vocab))}
+        return output
+
+    def demo(self, predict_fn=None, inputs=None, outputs=None, share=True, **kwargs):
+        if not predict_fn: predict_fn = self.gradio_predict_fn
+        gradio_types = self.get_gradio_types()
+        if not inputs: inputs = gradio_types[0]
+        if not outputs: outputs = gradio_types[1]
+        if inputs == "image": inputs = gr.inputs.Image(type='file', label='input')
+        if outputs == "label": outputs = gr.outputs.Label(num_top_classes=3)
+        gr.Interface(fn=predict_fn, inputs=inputs, outputs=outputs, **kwargs).launch(share=share)
+
     def show_results(self, ds_idx=1, dl=None, max_n=9, shuffle=True, **kwargs):
         if dl is None: dl = self.dls[ds_idx].new(shuffle=shuffle)
         b = dl.one_batch()
@@ -316,6 +347,9 @@ add_docs(Learner, "Group together a `model`, some `dls` and a `loss_func` to han
     validate="Validate on `dl` with potential new `cbs`.",
     get_preds="Get the predictions and targets on the `ds_idx`-th dbunchset or `dl`, optionally `with_input` and `with_loss`",
     predict="Prediction on `item`, fully decoded, loss function decoded and probabilities",
+    get_gradio_types="Read the types of inputs and outputs from `dls` and return the corresponding gradio types",
+    gradio_predict_fn="Default predict function gradio will use in demo.",
+    demo="Generate a shareable Gradio demo of `learner`.",
     validation_context="A `ContextManagers` suitable for validation, with optional `cbs`",
     show_results="Show some predictions on `ds_idx`-th dataset or `dl`",
     show_training_loop="Show each step in the training loop",
